@@ -4,12 +4,12 @@ import cmxLogoWhite from "../images/callmax_cover_removebg.png";
 import cmxLogo from "../images/cmxlogo-removebg-preview.png";
 import { SERVER_URL } from "../lib/constants";
 import SurveyStepper from "./components/SurveyStepper";
-// import packageJson from "../../package.json";
+import packageJson from "../../package.json";
 
 
 const REDIRECT_URL = "https://www.callmaxsolutions.com";
 const REDIRECT_SECONDS = 10;
-const APP_VERSION = "0.1.0"; // replace with packageJson.version if your setup supports it
+const APP_VERSION = packageJson.version;
 
 const INITIAL_FORM = {
   name: "",
@@ -117,32 +117,37 @@ export default function CompanyHelpForm() {
     <div className="min-h-screen bg-gradient-to-br from-[#52b9f4] via-[#014968] to-[#02111f] flex flex-col">
       {!submitted ? (
         <>
-          <main className="flex-1 flex items-center justify-center px-4 py-10">
-            <div className="w-full max-w-5xl flex flex-col items-center">
-              {/* HERO */}
+          <main className="flex-1 px-4 pt-3">
+
+            <div className="w-full max-w-5xl mx-auto flex flex-col items-center">
+
+              {/* HERO - FIXED TOP */}
               <div className="w-full text-center text-white">
                 <img
                   src={cmxLogoWhite}
                   alt="Callmax"
-                  className="mx-auto w-[180px] sm:w-[220px] mb-6"
+                  className="mx-auto w-[180px] sm:w-[220px] mb-4"
                 />
 
                 <h1 className="text-3xl sm:text-4xl lg:text-5xl font-light leading-tight">
                   Voice of the Customer
                 </h1>
 
-                <p className="mt-4 text-white/80 max-w-2xl mx-auto text-sm sm:text-base">
+                <p className="mt-3 text-white/80 max-w-2xl mx-auto text-sm sm:text-base">
                   Help us improve our services by sharing your experience.
                 </p>
               </div>
 
-              {/* STEPPER */}
-              <div className="w-full max-w-4xl mt-10">
-                {submitError ? (
+              {/* FIXED SPACING (CRITICAL) */}
+              <div className="h-10" />
+
+              {/* STEPPER - STATIC START POSITION */}
+              <div className="w-full max-w-5xl">
+                {submitError && (
                   <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                     {submitError}
                   </div>
-                ) : null}
+                )}
 
                 <SurveyStepper
                   form={form}
@@ -151,10 +156,11 @@ export default function CompanyHelpForm() {
                   loading={loading}
                 />
               </div>
+
             </div>
           </main>
 
-          <footer className="w-full text-center text-white/60 text-[9px] leading-tight px-4 pb-6 pt-2">
+          <footer className="w-full text-center text-white/60 text-[9px] leading-tight px-4 pb-6 pt-0">
             <p>CMX VOC Survey Form v{APP_VERSION}</p>
             <p>Developed for exclusive use of Callmax Solutions Int&apos;l Inc.</p>
             <p>CMX DREAM-DEVOPS || © 2026</p>
