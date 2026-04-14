@@ -14,18 +14,17 @@ const PORT = process.env.SERVER_PORT || 4000;
 
 /* ---------------- MIDDLEWARE ---------------- */
 
-// app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
   cors({
-    origin: "https://voc.cmxph.com",
-    // origin: "http://localhost:3000",
+    origin: ["https://voc.cmxph.com", "http://localhost:3000"],
     methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   }),
 );
+
 /* ---------------- AWS CONFIG ---------------- */
 
 AWS.config.update({
@@ -35,15 +34,14 @@ AWS.config.update({
 });
 
 const s3 = new AWS.S3();
-
 const SURVEY_BUCKET = "cmxclientescalationfiles";
 
 /* ---------------- FILE UPLOAD ---------------- */
 
 const upload = multer({
-  dest: "uploads/", // temporary disk storage
+  dest: "uploads/",
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB per file
+    fileSize: 100 * 1024 * 1024,
   },
 });
 
@@ -71,6 +69,7 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
       communication,
       collaboration,
       consistency,
+      overall_comments,
       sendCopy,
     } = req.body;
 
@@ -85,7 +84,9 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
       !email?.trim() ||
       !tasks?.trim() ||
       !satisfaction ||
-      !recommend ||
+      recommend === undefined ||
+      recommend === null ||
+      recommend === "" ||
       !communication ||
       !collaboration ||
       !consistency
@@ -98,13 +99,14 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
 
     /* ---------- CONVERT VALUES ---------- */
 
-    const satisfactionValue = parseInt(satisfaction);
-    const recommendValue = parseInt(recommend);
-    const communicationValue = parseInt(communication);
-    const collaborationValue = parseInt(collaboration);
-    const consistencyValue = parseInt(consistency);
+    const satisfactionValue = parseInt(satisfaction, 10);
+    const recommendValue = parseInt(recommend, 10);
+    const communicationValue = parseInt(communication, 10);
+    const collaborationValue = parseInt(collaboration, 10);
+    const consistencyValue = parseInt(consistency, 10);
 
     const sendCopyValue = sendCopy === "true" || sendCopy === true ? 1 : 0;
+    const overallCommentsValue = overall_comments?.trim() || null;
 
     let uploadedFiles = [];
 
@@ -124,7 +126,7 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
           .upload({
             Bucket: SURVEY_BUCKET,
             Key: fileKey,
-            Body: fs.createReadStream(file.path), // stream file
+            Body: fs.createReadStream(file.path),
             ContentType: file.mimetype,
             ACL: "private",
           })
@@ -134,8 +136,9 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
 
         uploadedFiles.push(uploadResult.Key);
 
-        // delete temporary file after upload
-        fs.unlinkSync(file.path);
+        if (fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
       }
     } else {
       console.log("📭 No files uploaded");
@@ -146,25 +149,40 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
     const attachmentsString = uploadedFiles.join(",");
 
     console.log("📎 Attachments saved:", attachmentsString);
+    console.log("📝 Overall comments:", overallCommentsValue);
 
     /* ---------- SAVE TO DATABASE ---------- */
 
     const sql = `
       INSERT INTO 1006_customer_survey_system.survey_responses
-      (name, company, email, tasks, satisfaction, recommend, communication, collaboration, consistency, attachment_files, send_copy)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (
+        name,
+        company,
+        email,
+        tasks,
+        satisfaction,
+        recommend,
+        communication,
+        collaboration,
+        consistency,
+        overall_comments,
+        attachment_files,
+        send_copy
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await db.execute(sql, [
-      name,
-      company,
-      email,
-      tasks || null,
+      name.trim(),
+      company.trim(),
+      email.trim(),
+      tasks.trim(),
       satisfactionValue,
       recommendValue,
       communicationValue,
       collaborationValue,
       consistencyValue,
+      overallCommentsValue,
       attachmentsString || null,
       sendCopyValue,
     ]);
@@ -183,6 +201,7 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
+      error: error.message,
     });
   }
 });
