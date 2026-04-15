@@ -84,7 +84,6 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
       !name?.trim() ||
       !company?.trim() ||
       !email?.trim() ||
-      !tasks?.trim() ||
       !satisfaction ||
       recommend === undefined ||
       recommend === null ||
@@ -180,7 +179,7 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
       name.trim(),
       company.trim(),
       email.trim(),
-      tasks.trim(),
+      tasks.trim() || null,
       satisfactionValue,
       recommendValue,
       communicationValue,
