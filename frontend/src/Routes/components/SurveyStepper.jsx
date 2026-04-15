@@ -21,7 +21,7 @@ export default function SurveyStepper({ form, setForm, onSubmit, loading }) {
         { key: "email", label: "Email", placeholder: "Your email" },
         {
           key: "tasks",
-          label: "Task",
+          label: "Task (Optional)",
           placeholder: "What task(s) do we help your company with?"
         }
       ]
@@ -68,7 +68,10 @@ export default function SurveyStepper({ form, setForm, onSubmit, loading }) {
 
   const isStepValid = () => {
     if (current.type === "group") {
-      return current.fields.every((f) => form[f.key]);
+      return current.fields.every((f) => {
+        if (f.key === "tasks") return true; // ✅ optional
+        return !!form[f.key];
+      });
     } else if (current.type === "textarea") {
       return true;
     } else {
