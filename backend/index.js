@@ -71,6 +71,8 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
       consistency,
       overall_comments,
       sendCopy,
+      survey_month,   
+      agent,      
     } = req.body;
 
     console.log("👤 Respondent:", name, "|", email);
@@ -167,9 +169,11 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
         consistency,
         overall_comments,
         attachment_files,
-        send_copy
+        send_copy,
+        survey_month,
+        agent
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await db.execute(sql, [
@@ -185,6 +189,8 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
       overallCommentsValue,
       attachmentsString || null,
       sendCopyValue,
+      survey_month || null,
+      agent || null,
     ]);
 
     console.log("✅ Survey saved with ID:", result.insertId);

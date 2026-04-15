@@ -22,6 +22,8 @@ const INITIAL_FORM = {
   collaboration: "",
   consistency: "",
   overall_comments: "",
+  survey_month: "",  
+  agent: "",      
 };
 
 export default function CompanyHelpForm() {
@@ -37,6 +39,9 @@ export default function CompanyHelpForm() {
     () => ({
       email: searchParams.get("email") || "",
       company: searchParams.get("client") || "",
+      name: searchParams.get("name") || "",
+      survey_month: searchParams.get("month") || "",
+      agent: searchParams.get("agent") || "",
     }),
     [searchParams],
   );
@@ -48,8 +53,14 @@ export default function CompanyHelpForm() {
       ...prev,
       email: prefillValues.email || prev.email,
       company: prefillValues.company || prev.company,
+      name: prefillValues.name || prev.name,
+      survey_month: prefillValues.survey_month || prev.survey_month,
+      agent: prefillValues.agent || prev.agent,
     }));
   }, [prefillValues]);
+
+
+
 
   useEffect(() => {
     if (!submitted) return;
