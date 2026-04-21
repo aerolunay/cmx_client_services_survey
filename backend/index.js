@@ -1,32 +1,68 @@
 const express = require("express");
-const dotenv = require("dotenv");
 const cors = require("cors");
+const dotenv = require("dotenv");
 const AWS = require("aws-sdk");
-const multer = require("multer");
 const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
+
+// 🔐 SECURITY
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 
 const db = require("./config/dbconfig");
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.SERVER_PORT || 4000;
+const PORT = process.env.PORT || 5000;
 
-/* ---------------- MIDDLEWARE ---------------- */
+// ===============================
+// 🔐 SECURITY MIDDLEWARE
+// ===============================
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Hide Express signature
+app.disable("x-powered-by");
+
+// Security headers
+app.use(helmet());
+
+// Body size protection
+app.use(express.json({ limit: "1mb" }));
+
+// CORS (from ENV)
+const allowedOrigins = (
+  process.env.CORS_ORIGIN ||
+  process.env.FRONTEND_URL ||
+  ""
+)
+  .split(",")
+  .map(o => o.trim());
 
 app.use(
   cors({
-    origin: ["https://voc.cmxph.com", "http://localhost:3000"],
-    methods: ["GET", "POST", "OPTIONS"],
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true); // allow Postman / server calls
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
-  }),
+  })
 );
 
-/* ---------------- AWS CONFIG ---------------- */
+// Global rate limiter
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
+app.use(globalLimiter);
+
+// ===============================
+// ☁️ AWS CONFIG
+// ===============================
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -34,129 +70,59 @@ AWS.config.update({
 });
 
 const s3 = new AWS.S3();
-const SURVEY_BUCKET = "cmxclientescalationfiles";
 
-/* ---------------- FILE UPLOAD ---------------- */
+// ===============================
+// 📂 MULTER CONFIG (HARDENED)
+// ===============================
 
 const upload = multer({
   dest: "uploads/",
   limits: {
-    fileSize: 100 * 1024 * 1024,
+    fileSize: 5 * 1024 * 1024, // 5MB per file
+    files: 5, // max 5 files
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "application/pdf",
+    ];
+
+    if (!allowedTypes.includes(file.mimetype)) {
+      return cb(new Error("Invalid file type"), false);
+    }
+
+    cb(null, true);
   },
 });
 
-/* ---------------- TEST ROUTE ---------------- */
-
-app.get("/", (req, res) => {
-  res.send("Survey API Running");
+// ===============================
+// 🧠 HEALTH CHECK
+// ===============================
+app.get("/health", (req, res) => {
+  res.json({ status: "OK" });
 });
 
-/* ---------------- SUBMIT SURVEY ---------------- */
+// ===============================
+// 🚀 SUBMIT SURVEY (HARDENED)
+// ===============================
 
-app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
-  try {
-    console.log("📩 Survey submission received");
-    console.log("FILES RECEIVED:", req.files);
-    console.log("BODY RECEIVED:", req.body);
+// tighter limiter for this route
+const submitLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  message: "Too many submissions. Please try again later.",
+});
 
-    const {
-      name,
-      company,
-      email,
-      tasks,
-      satisfaction,
-      recommend,
-      communication,
-      collaboration,
-      consistency,
-      overall_comments,
-      sendCopy,
-      survey_month,   
-      agent,      
-    } = req.body;
+app.post(
+  "/submit-survey",
+  submitLimiter,
+  upload.array("attachments", 5),
+  async (req, res) => {
+    const connection = await db.getConnection();
 
-    console.log("👤 Respondent:", name, "|", email);
-    console.log("🏢 Company:", company);
-
-    /* ---------- VALIDATE REQUIRED FIELDS ---------- */
-
-    if (
-      !name?.trim() ||
-      !company?.trim() ||
-      !email?.trim() ||
-      !satisfaction ||
-      recommend === undefined ||
-      recommend === null ||
-      recommend === "" ||
-      !communication ||
-      !collaboration ||
-      !consistency
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Please complete all required fields.",
-      });
-    }
-
-    /* ---------- CONVERT VALUES ---------- */
-
-    const satisfactionValue = parseInt(satisfaction, 10);
-    const recommendValue = parseInt(recommend, 10);
-    const communicationValue = parseInt(communication, 10);
-    const collaborationValue = parseInt(collaboration, 10);
-    const consistencyValue = parseInt(consistency, 10);
-
-    const sendCopyValue = sendCopy === "true" || sendCopy === true ? 1 : 0;
-    const overallCommentsValue = overall_comments?.trim() || null;
-
-    let uploadedFiles = [];
-
-    /* ---------- UPLOAD FILES TO S3 ---------- */
-
-    if (req.files && req.files.length > 0) {
-      console.log(`📂 ${req.files.length} file(s) detected for upload`);
-
-      for (const file of req.files) {
-        const fileKey = `clientsurveyattachments/${Date.now()}-${Math.random()
-          .toString(36)
-          .substring(2)}-${file.originalname}`;
-
-        console.log("⬆️ Uploading file to S3:", file.originalname);
-
-        const uploadResult = await s3
-          .upload({
-            Bucket: SURVEY_BUCKET,
-            Key: fileKey,
-            Body: fs.createReadStream(file.path),
-            ContentType: file.mimetype,
-            ACL: "private",
-          })
-          .promise();
-
-        console.log("✅ File uploaded:", uploadResult.Key);
-
-        uploadedFiles.push(uploadResult.Key);
-
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      }
-    } else {
-      console.log("📭 No files uploaded");
-    }
-
-    /* ---------- CONVERT FILES TO STRING ---------- */
-
-    const attachmentsString = uploadedFiles.join(",");
-
-    console.log("📎 Attachments saved:", attachmentsString);
-    console.log("📝 Overall comments:", overallCommentsValue);
-
-    /* ---------- SAVE TO DATABASE ---------- */
-
-    const sql = `
-      INSERT INTO 1006_customer_survey_system.survey_responses
-      (
+    try {
+      const {
         name,
         company,
         email,
@@ -167,67 +133,101 @@ app.post("/submit-survey", upload.array("files", 10), async (req, res) => {
         collaboration,
         consistency,
         overall_comments,
-        attachment_files,
         send_copy,
         survey_month,
-        agent
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
+        agent,
+      } = req.body;
 
-    const [result] = await db.execute(sql, [
-      name.trim(),
-      company.trim(),
-      email.trim(),
-      tasks.trim() || null,
-      satisfactionValue,
-      recommendValue,
-      communicationValue,
-      collaborationValue,
-      consistencyValue,
-      overallCommentsValue,
-      attachmentsString || null,
-      sendCopyValue,
-      survey_month || null,
-      agent || null,
-    ]);
+      // ===============================
+      // 🔐 BASIC VALIDATION
+      // ===============================
+      if (!name || !company || !email) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
 
-    console.log("✅ Survey saved with ID:", result.insertId);
+      // ===============================
+      // 📂 UPLOAD FILES TO S3
+      // ===============================
+      let uploadedFiles = [];
 
-    res.json({
-      success: true,
-      message: "Survey submitted successfully",
-      surveyId: result.insertId,
-      uploadedFiles,
-    });
-  } catch (error) {
-    console.error("❌ Survey submission error:", error);
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
 
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
+          const fileContent = fs.readFileSync(file.path);
 
-/* ---------------- MULTER ERROR HANDLER ---------------- */
+          const params = {
+            Bucket: process.env.S3_BUCKET_NAME,
+            Key: `clientsurveyattachments/${Date.now()}-${safeName}`,
+            Body: fileContent,
+            ContentType: file.mimetype,
+          };
 
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({
-        success: false,
-        message: "File too large. Maximum allowed size is 100MB.",
+          const uploadResult = await s3.upload(params).promise();
+
+          uploadedFiles.push({
+            name: safeName,
+            key: uploadResult.Key,
+          });
+        }
+      }
+
+      // ===============================
+      // 💾 INSERT TO DATABASE
+      // ===============================
+      const sql = `
+        INSERT INTO survey_responses (
+          name, company, email, tasks,
+          satisfaction, recommend, communication,
+          collaboration, consistency, overall_comments,
+          attachment_files, send_copy, survey_month, agent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      const values = [
+        name,
+        company,
+        email,
+        tasks || null,
+        satisfaction,
+        recommend,
+        communication,
+        collaboration,
+        consistency,
+        overall_comments,
+        JSON.stringify(uploadedFiles),
+        send_copy ? 1 : 0,
+        survey_month,
+        agent,
+      ];
+
+      await connection.execute(sql, values);
+
+      return res.json({ success: true });
+    } catch (err) {
+      console.error("❌ ERROR:", err);
+
+      return res.status(500).json({
+        error: "Internal server error",
       });
+    } finally {
+      // 🔥 CLEANUP FILES ALWAYS
+      if (req.files) {
+        req.files.forEach(file => {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        });
+      }
+
+      connection.release();
     }
   }
+);
 
-  next(err);
-});
-
-/* ---------------- SERVER ---------------- */
-
+// ===============================
+// 🚀 START SERVER
+// ===============================
 app.listen(PORT, () => {
-  console.log(`🚀 Survey server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
