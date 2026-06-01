@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const AWS = require("aws-sdk");
 const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
@@ -9,6 +8,7 @@ const multer = require("multer");
 // 🔐 SECURITY
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 
 const db = require("./config/dbconfig");
 
@@ -20,24 +20,51 @@ const PORT = process.env.PORT || 5000;
 // ===============================
 // 🔐 SECURITY MIDDLEWARE
 // ===============================
+const FRONTEND_URL = process.env.FRONTEND_URL;
+const CORS_ORIGIN = process.env.CORS_ORIGIN;
 
 // Hide Express signature
 app.disable("x-powered-by");
+const allowedConnectSrc = ["'self'", FRONTEND_URL, CORS_ORIGIN].filter(Boolean);
 
 // Security headers
-app.use(helmet());
+app.use(
+  helmet({
+    frameguard: {
+      action: "deny",
+    },
+    noSniff: true,
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+        imgSrc: ["'self'", "data:", "https:"],
+        fontSrc: ["'self'", "data:", "https:"],
+        connectSrc: allowedConnectSrc,
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 
 // Body size protection
 app.use(express.json({ limit: "1mb" }));
 
 // CORS (from ENV)
-const allowedOrigins = (
-  process.env.CORS_ORIGIN ||
-  process.env.FRONTEND_URL ||
-  ""
-)
+const allowedOrigins = (CORS_ORIGIN || FRONTEND_URL || "")
   .split(",")
-  .map(o => o.trim());
+  .map((o) => o.trim());
 
 app.use(
   cors({
@@ -47,7 +74,7 @@ app.use(
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
-  })
+  }),
 );
 
 // Global rate limiter
@@ -63,13 +90,14 @@ app.use(globalLimiter);
 // ===============================
 // ☁️ AWS CONFIG
 // ===============================
-AWS.config.update({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION,
-});
 
-const s3 = new AWS.S3();
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
 
 // ===============================
 // 📂 MULTER CONFIG (HARDENED)
@@ -82,11 +110,7 @@ const upload = multer({
     files: 5, // max 5 files
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "application/pdf",
-    ];
+    const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
 
     if (!allowedTypes.includes(file.mimetype)) {
       return cb(new Error("Invalid file type"), false);
@@ -154,20 +178,20 @@ app.post(
         for (const file of req.files) {
           const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
 
-          const fileContent = fs.readFileSync(file.path);
+          const key = `clientsurveyattachments/${Date.now()}-${safeName}`;
 
-          const params = {
-            Bucket: process.env.S3_BUCKET_NAME,
-            Key: `clientsurveyattachments/${Date.now()}-${safeName}`,
-            Body: fileContent,
-            ContentType: file.mimetype,
-          };
-
-          const uploadResult = await s3.upload(params).promise();
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: process.env.S3_BUCKET_NAME,
+              Key: key,
+              Body: fs.createReadStream(file.path),
+              ContentType: file.mimetype,
+            }),
+          );
 
           uploadedFiles.push({
             name: safeName,
-            key: uploadResult.Key,
+            key,
           });
         }
       }
@@ -213,7 +237,7 @@ app.post(
     } finally {
       // 🔥 CLEANUP FILES ALWAYS
       if (req.files) {
-        req.files.forEach(file => {
+        req.files.forEach((file) => {
           if (fs.existsSync(file.path)) {
             fs.unlinkSync(file.path);
           }
@@ -222,7 +246,7 @@ app.post(
 
       connection.release();
     }
-  }
+  },
 );
 
 // ===============================
